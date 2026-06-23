@@ -1,0 +1,505 @@
+/* ============================================================
+   Step Sequencer — Dark-Mode Responsive Stylesheet
+   ============================================================ */
+/* This CSS file handles the layout, colors, and styling of the sequencer.
+   It uses a "mobile-first" approach with CSS Variables for easy color changes,
+   and CSS Grid/Flexbox for responsive component placement. */
+
+/* ─── Design tokens ──────────────────────────────────────────── */
+/* :root defines CSS variables (custom properties) that are available globally.
+   We use these to maintain a consistent dark-mode color palette and spacing. */
+:root {
+  --bg:            #1a1a2e; /* Deep dark blue for the main page background */
+  --bg-card:       #16213e; /* Slightly lighter dark blue for component cards */
+  --bg-card-alt:   #0f3460; /* Highlight blue for variations (if needed) */
+  --accent:        #e9a84c; /* Bright amber/golden color for active states (checkboxes, text) */
+  --accent-dim:    #b07a2e; /* Dimmer amber for borders and hover effects */
+  --text:          #e0e0e0; /* Off-white color for main body text to reduce eye strain */
+  --text-muted:    #8a8aa0; /* Grayish blue for secondary text (labels, headers) */
+  --border:        #2a2a4a; /* Subtle line color for separating components and grid rows */
+  --thumb:         #e9a84c; /* Amber color specifically for range slider thumbs */
+  --track-bg:      #2a2a4a; /* Dark background color for slider tracks and unchecked boxes */
+  --radius:        8px;     /* Standard border radius to give elements soft, rounded corners */
+  --font:          'Inter', system-ui, sans-serif; /* Clean, modern sans-serif font stack */
+}
+
+/* ─── Base reset & body ──────────────────────────────────────── */
+/* The "reset": forces all elements (and pseudo-elements) to include padding and border
+   in their total width/height calculations, preventing layout bugs. Also removes default margins/padding. */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* The main document body styles */
+body {
+  background-color: var(--bg); /* Set the global background color */
+  color: var(--text); /* Set the global text color */
+  font-family: var(--font); /* Apply our chosen font */
+  font-size: 14px; /* Base text size */
+  line-height: 1.5; /* Good line height for readability */
+  padding: 16px 20px; /* Add some breathing room around the edges of the window */
+  min-height: 100vh; /* Ensure the body covers at least the full height of the viewport */
+}
+
+/* Main section headings (e.g. "Track 1 - Parameters", "Sequence Grid") */
+h2 {
+  font-size: 1rem; /* Slightly larger than base text */
+  font-weight: 600; /* Semi-bold */
+  margin-bottom: 8px; /* Space below the heading */
+  color: var(--accent); /* Highlight the headings with our amber accent color */
+}
+
+/* Sub-section headings (e.g. "Waveform Volumes", "Phase") */
+h3 {
+  font-size: 0.8rem; /* Smaller text */
+  font-weight: 500; /* Medium weight */
+  text-transform: uppercase; /* Makes text ALL CAPS for a UI-label look */
+  letter-spacing: 0.05em; /* Slightly spread out the letters for readability */
+  color: var(--text-muted); /* Use the subtle grey-blue color */
+  margin-bottom: 6px; /* Space below the heading */
+}
+
+/* ─── Navigation bar ─────────────────────────────────────────── */
+/* The top bar containing Play, BPM, and Steps controls */
+.nav {
+  display: flex; /* Use Flexbox to align items in a row */
+  align-items: center; /* Center items vertically */
+  gap: 16px; /* Add a 16px gap between each item (button, labels) */
+  flex-wrap: wrap; /* Allow items to wrap to the next line if the screen is too narrow */
+  background: var(--bg-card); /* Use the card background color */
+  padding: 10px 16px; /* Inner padding for the nav bar */
+  border-radius: var(--radius); /* Rounded corners */
+  border: 1px solid var(--border); /* A subtle outline */
+  margin-bottom: 16px; /* Space between nav and the main content below it */
+}
+
+/* The labels inside the nav bar ("BPM", "Steps") */
+.nav-label {
+  display: flex; /* Flexbox so the text and the input sit side-by-side */
+  align-items: center; /* Vertically center them */
+  gap: 6px; /* Small gap between text and input box */
+  font-size: 0.85rem; /* Slightly smaller text */
+  color: var(--text-muted); /* Muted color so it's not too distracting */
+}
+
+/* ─── Buttons ────────────────────────────────────────────────── */
+/* Global button styles (Play, Preview) */
+button {
+  background: var(--accent); /* Buttons are filled with the bright amber color */
+  color: #111; /* Dark text contrasts nicely against the bright background */
+  border: none; /* Remove default browser borders */
+  padding: 7px 18px; /* Vertical and horizontal inner padding */
+  font-family: var(--font); /* Inherit the main font */
+  font-size: 0.85rem; /* Slightly smaller font size */
+  font-weight: 600; /* Bold text for emphasis */
+  cursor: pointer; /* Change mouse cursor to a hand to indicate it's clickable */
+  border-radius: var(--radius); /* Rounded corners matching the design token */
+  transition: opacity 0.15s, transform 0.1s; /* Smoothly animate hover (opacity) and click (transform/scale) states */
+}
+
+/* What happens when the mouse hovers over a button */
+button:hover  { opacity: 0.85; /* Slightly dim the button */ }
+
+/* What happens the moment a button is clicked (held down) */
+button:active { transform: scale(0.97); /* Shrink it by 3% to simulate a physical button press */ }
+
+/* ─── Inputs: number, select ─────────────────────────────────── */
+/* Styling for number typing boxes and dropdown menus */
+input[type="number"],
+select {
+  background: var(--bg); /* Dark background matching the page */
+  color: var(--text); /* Light text so it's readable */
+  border: 1px solid var(--border); /* Subtle border outline */
+  border-radius: 4px; /* Slightly rounded corners (smaller than cards) */
+  padding: 4px 6px; /* Inner spacing */
+  font-family: var(--font); /* Inherit font */
+  font-size: 0.85rem; /* Matching font size */
+  width: 60px; /* Fixed width so they look consistent */
+}
+
+/* Select dropdowns need flexible width depending on the option text length */
+select { width: auto; }
+
+/* ─── Range sliders ──────────────────────────────────────────── */
+/* Custom styling for HTML <input type="range"> (the sliding bars) */
+input[type="range"] {
+  -webkit-appearance: none; /* Remove default styling on WebKit browsers (Chrome/Safari) */
+  appearance: none; /* Remove default styling on modern browsers */
+  width: 140px; /* Fixed width for all sliders */
+  height: 6px; /* The thickness of the slider "track" */
+  background: var(--track-bg); /* Dark background for the track */
+  border-radius: 3px; /* Rounded ends for the track */
+  outline: none; /* Remove the blue focus ring */
+  cursor: pointer; /* Show clickable cursor over the entire slider */
+}
+
+/* Styling the "thumb" (the draggable circle) on WebKit browsers */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; /* Remove default thumb style */
+  appearance: none;
+  width: 14px; /* Width of the circle */
+  height: 14px; /* Height of the circle */
+  border-radius: 50%; /* Make it perfectly round */
+  background: var(--thumb); /* Amber color */
+  border: 2px solid var(--bg); /* A dark border to create visual separation from the track */
+  transition: transform 0.1s; /* Smooth animation when hovered */
+}
+
+/* Enlarge the thumb slightly when hovering over it (WebKit) */
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2); /* Grow to 120% size */
+}
+
+/* Styling the "thumb" on Mozilla Firefox */
+input[type="range"]::-moz-range-thumb {
+  width: 14px; /* Same width */
+  height: 14px; /* Same height */
+  border-radius: 50%; /* Make it round */
+  background: var(--thumb); /* Same amber color */
+  border: 2px solid var(--bg); /* Same dark border */
+  cursor: pointer; /* Clickable cursor */
+}
+
+/* ─── Main two-column layout ─────────────────────────────────── */
+/* The container holding the left controls and the right canvases */
+.main-layout {
+  display: grid; /* Use CSS Grid for layout */
+  grid-template-columns: 1fr 1fr; /* Create two equal-width columns (1 fraction each) */
+  gap: 16px; /* Space between the two columns */
+  margin-bottom: 16px; /* Space below this whole layout section */
+}
+
+/* Responsive breakpoint: If the screen is narrower than 820px, change the grid */
+@media (max-width: 820px) {
+  .main-layout { 
+    grid-template-columns: 1fr; /* Stack the columns vertically (one column) */
+  }
+}
+
+/* ─── Controls panel (left card) ─────────────────────────────── */
+/* The box holding all the track parameters and sliders */
+.controls-panel {
+  background: var(--bg-card); /* Card background color */
+  border: 1px solid var(--border); /* Subtle border outline */
+  border-radius: var(--radius); /* Rounded corners */
+  padding: 14px 18px; /* Inner spacing */
+}
+
+/* A grouping container for related sliders (e.g., all Volume sliders, all Phase sliders) */
+.slider-group {
+  margin-bottom: 12px; /* Space below the group */
+  padding-bottom: 10px; /* Inner padding at the bottom */
+  border-bottom: 1px solid var(--border); /* A dividing line between groups */
+}
+
+/* Remove the border and padding from the very last group so it doesn't look weird */
+.slider-group:last-of-type { border-bottom: none; padding-bottom: 0; }
+
+/* Styling for the labels that wrap around each slider */
+.slider-group label {
+  display: flex; /* Flexbox to align text, slider, and value span in a row */
+  align-items: center; /* Vertically center them */
+  gap: 8px; /* Space between elements */
+  margin-bottom: 5px; /* Space between rows of sliders */
+  font-size: 0.82rem; /* Slightly smaller text */
+  min-width: 0; /* Prevents flexbox children from overflowing their container */
+}
+
+/* The small numeric display text to the right of each slider */
+.val-display {
+  font-variant-numeric: tabular-nums; /* Forces numbers to have equal width so they don't jitter when changing (e.g. 1 is as wide as 8) */
+  font-size: 0.78rem; /* Small text */
+  color: var(--text-muted); /* Muted color */
+  min-width: 36px; /* Fixed minimum width so sliders don't shift when values change */
+  text-align: right; /* Right-align the numbers for neatness */
+}
+
+/* ─── Canvas section (right card) ────────────────────────────── */
+/* Container holding both canvas cards (Waveform and Spectrometer) */
+.canvas-section {
+  display: flex; /* Flexbox layout */
+  flex-direction: column; /* Stack the two canvas cards vertically */
+  gap: 12px; /* Space between the two canvas cards */
+}
+
+/* Individual card styling for each canvas */
+.canvas-card {
+  background: var(--bg-card); /* Card background color */
+  border: 1px solid var(--border); /* Subtle outline */
+  border-radius: var(--radius); /* Rounded corners */
+  padding: 12px 14px; /* Inner spacing */
+}
+
+/* The actual HTML5 Canvas element */
+.canvas-card canvas {
+  display: block; /* Removes inline spacing bugs under the canvas */
+  width: 100%; /* Forces the canvas to stretch to the full width of its card parent (responsive) */
+  border-radius: 4px; /* Small rounding on the canvas corners */
+  background: #0d0d1a; /* Very dark background specifically for the canvas drawing area */
+}
+
+/* The label for the "Log" checkbox next to the Spectrometer title */
+.log-toggle {
+  font-size: 0.75rem; /* Small text */
+  color: var(--text-muted); /* Muted color */
+  margin-left: 8px; /* Space between title and checkbox */
+  font-weight: 400; /* Normal weight (not bold) */
+  text-transform: none; /* Revert the ALL CAPS from the parent <h3> */
+  letter-spacing: 0; /* Revert letter spacing */
+}
+
+/* Vertically align the checkbox input with the text */
+.log-toggle input { vertical-align: middle; }
+
+/* The "Track X" text inside the Waveform title, matching the accent color */
+.lbl-track-mirror { color: var(--accent); }
+
+/* ─── Grid section ───────────────────────────────────────────── */
+/* The bottom card holding the sequencer steps */
+.grid-section {
+  background: var(--bg-card); /* Card background color */
+  border: 1px solid var(--border); /* Subtle outline */
+  border-radius: var(--radius); /* Rounded corners */
+  padding: 14px 18px; /* Inner spacing */
+}
+
+/* The container inside .grid-section where JS injects rows */
+#grid {
+  overflow-x: auto; /* Adds a horizontal scrollbar ONLY if the grid is too wide for the screen */
+  max-width: 100%; /* Prevents the grid from breaking the page layout */
+  padding-bottom: 4px; /* Space for the scrollbar */
+}
+
+/* Each track row inside the grid (generated by JS) */
+.grid-row {
+  display: flex; /* Flexbox to align radio, label, slider, and checkboxes in a horizontal row */
+  align-items: center; /* Vertically center everything in the row */
+  gap: 4px; /* Small gap between checkboxes */
+  margin-bottom: 4px; /* Space between rows */
+  white-space: nowrap; /* Prevents checkboxes from wrapping to a new line; forces horizontal scrolling instead */
+}
+
+/* The radio button used to select a track for editing */
+.grid-row input[type="radio"] { 
+  accent-color: var(--accent); /* Modern CSS feature to change the radio button's active color to our amber accent */
+}
+
+/* The label ("T1", "T2") next to the radio button */
+.grid-row label {
+  font-size: 0.78rem; /* Small text */
+  font-weight: 600; /* Bold text */
+  color: var(--text-muted); /* Muted color */
+  min-width: 28px; /* Fixed width so all checkboxes align perfectly vertically */
+  margin-bottom: 0; /* Override global label margin */
+}
+
+/* The small, per-track volume slider inside the grid row */
+.grid-row input[type="range"] {
+  width: 60px; /* Make it narrow so it doesn't take up too much space */
+  height: 4px; /* Make the track thinner */
+}
+
+/* The individual step checkboxes */
+.grid-row input[type="checkbox"] {
+  -webkit-appearance: none; /* Hide the default browser checkmark box (WebKit) */
+  appearance: none; /* Hide default styling (modern browsers) */
+  width: 20px; /* Fixed width (square box) */
+  height: 20px; /* Fixed height (square box) */
+  background: var(--track-bg); /* Dark background (inactive step) */
+  border: 1px solid var(--border); /* Subtle outline */
+  border-radius: 3px; /* Slightly rounded corners */
+  cursor: pointer; /* Clickable cursor */
+  transition: background 0.12s, border-color 0.12s; /* Fast, smooth animation when clicked */
+  flex-shrink: 0; /* Prevents Flexbox from squishing the boxes if space is tight */
+}
+
+/* Styling for when a step is active (checked by the user) */
+.grid-row input[type="checkbox"]:checked {
+  background: var(--accent); /* Fill with bright amber */
+  border-color: var(--accent-dim); /* Slightly dimmer border */
+}
+
+/* Highlight the border when hovering over any checkbox */
+.grid-row input[type="checkbox"]:hover {
+  border-color: var(--accent); /* Amber border on hover */
+}
+
+/* Dynamic class added by JavaScript when the playhead reaches this step */
+.grid-row input[type="checkbox"].step-active {
+  box-shadow: 0 0 6px var(--accent); /* Adds a glowing amber aura around the playing step */
+}
+
+/* ─── Preview button ─────────────────────────────────────────── */
+/* Specific styling for the large Preview button at the bottom of the left panel */
+#btnPreview {
+  margin-top: 8px; /* Space above it */
+  width: 100%; /* Stretch it to the full width of the left panel */
+}
+
+/* ─── Scrollbar (webkit browsers only) ───────────────────────── */
+/* Custom styling for the horizontal scrollbar on the sequencer grid */
+#grid::-webkit-scrollbar { 
+  height: 6px; /* Make the scrollbar thin */
+}
+#grid::-webkit-scrollbar-track { 
+  background: var(--bg); /* Track background matches page background */
+  border-radius: 3px; /* Rounded ends */
+}
+#grid::-webkit-scrollbar-thumb { 
+  background: var(--border); /* Scrollbar "handle" color */
+  border-radius: 3px; /* Rounded ends */
+}
+
+/* ─── Toggle labels (Per-Step Pitch, Glissando) ──────────────── */
+/* Used in the controls panel for the checkbox toggles */
+.toggle-label {
+  display: flex;              /* Flexbox row layout */
+  align-items: center;        /* Vertically center checkbox and text */
+  gap: 8px;                   /* Space between checkbox and label text */
+  margin-bottom: 5px;         /* Consistent spacing with other slider labels */
+  font-size: 0.82rem;         /* Match existing slider label size */
+  cursor: pointer;            /* Indicate interactivity */
+}
+
+/* Style the toggle checkboxes to match the accent color scheme */
+.toggle-label input[type="checkbox"] {
+  accent-color: var(--accent);  /* Amber color for the check mark */
+  cursor: pointer;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+/* ─── Glissando percentage input ─────────────────────────────── */
+/* Small number input next to the Glissando toggle */
+.gliss-input {
+  width: 50px !important;      /* Override the default 60px input width */
+  padding: 2px 4px !important; /* Tighter padding */
+  font-size: 0.78rem;          /* Slightly smaller text */
+  text-align: center;          /* Center the percentage value */
+}
+
+/* Dim the input when disabled (Glissando toggle is OFF) */
+.gliss-input:disabled {
+  opacity: 0.35;               /* Fade to indicate inactive state */
+  cursor: not-allowed;         /* Show "not allowed" cursor */
+}
+
+/* ─── Step cell wrapper ──────────────────────────────────────── */
+/* Wraps each step's checkbox + optional per-step frequency input */
+.step-cell {
+  display: flex;
+  flex-direction: column;       /* Stack checkbox on top, freq input below */
+  align-items: center;          /* Center both horizontally */
+  gap: 2px;                     /* Tiny gap between checkbox and freq input */
+  flex-shrink: 0;               /* Prevent Flexbox from squishing cells */
+}
+
+/* ─── Per-step frequency input ───────────────────────────────── */
+/* Tiny number input shown below a step's checkbox when Per-Step Pitch is ON */
+.step-freq {
+  width: 42px !important;       /* Very narrow to fit inside a grid cell */
+  height: 18px;                  /* Short height to keep rows compact */
+  padding: 0 2px !important;    /* Minimal inner spacing */
+  font-size: 0.65rem;           /* Very small text */
+  text-align: center;           /* Center the Hz value */
+  background: var(--bg);        /* Dark background matching the page */
+  color: var(--accent);         /* Amber text for visibility against dark bg */
+  border: 1px solid var(--accent-dim); /* Subtle amber border */
+  border-radius: 3px;           /* Small rounding */
+  font-family: var(--font);     /* Inherit the system font */
+}
+
+/* Focus state for the per-step frequency input */
+.step-freq:focus {
+  outline: none;
+  border-color: var(--accent);  /* Brighter amber border on focus */
+  box-shadow: 0 0 4px rgba(233, 168, 76, 0.3); /* Subtle glow */
+}
+
+/* ─── Add Track button ───────────────────────────────────────── */
+/* Prominent button to append a new sequencer track */
+#btnAddTrack {
+  margin-top: 10px;              /* Space above the button */
+  width: 100%;                   /* Full width of the grid section */
+  background: transparent;       /* Transparent background for a "secondary" look */
+  color: var(--accent);          /* Amber text */
+  border: 2px dashed var(--accent-dim); /* Dashed border for an "add" affordance */
+  padding: 8px 18px;             /* Comfortable click target */
+  font-size: 0.85rem;            /* Match existing button size */
+  font-weight: 600;              /* Bold text */
+  cursor: pointer;
+  border-radius: var(--radius);  /* Rounded corners */
+  transition: background 0.15s, border-color 0.15s; /* Smooth hover animation */
+}
+
+/* Hover state: fill with a semi-transparent amber */
+#btnAddTrack:hover {
+  background: rgba(233, 168, 76, 0.1);
+  border-color: var(--accent);
+}
+
+/* Active/click state */
+#btnAddTrack:active {
+  transform: scale(0.98);
+}
+
+/* ─── Track controls container ───────────────────────────────── */
+/* Groups the radio + label + volume slider at the start of each grid row,
+   giving them a fixed width so checkboxes/step-cells always align vertically */
+.track-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 140px;              /* Increased width to fit the delete button */
+  flex-shrink: 0;                /* Never collapse */
+}
+
+/* ─── Delete Track Button ────────────────────────────────────── */
+/* Small, unobtrusive delete button next to track volume slider */
+.btn-delete-track {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-delete-track:hover {
+  color: #ff5555; /* Red color on hover */
+  border-color: #ff5555;
+  background: rgba(255, 85, 85, 0.1);
+}
+
+.btn-delete-track:active {
+  transform: scale(0.9);
+}
+
+/* ─── Step Note Dropdown ─────────────────────────────────────── */
+/* Tiny dropdown for selecting notes inside the step cell */
+.step-note {
+  width: 42px !important;
+  height: 18px;
+  padding: 0 2px !important;
+  font-size: 0.65rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font);
+  appearance: none;
+  -webkit-appearance: none;
+  text-align: center;
+}
+
+.step-note:focus {
+  outline: none;
+  border-color: var(--accent);
+}

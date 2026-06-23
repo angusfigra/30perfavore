@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<!-- The lang attribute specifies the language of the document (English) -->
+<html lang="en">
+
+<head>
+  <!-- Specifies the character encoding for the HTML document (UTF-8 handles almost all characters) -->
+  <meta charset="UTF-8">
+  <!-- Ensures the page scales correctly on mobile devices by setting viewport width to device width -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- A brief description of the page, useful for SEO and social sharing -->
+  <meta name="description" content="Web Audio API step sequencer with waveform mixing, phase control, and real-time spectrometer.">
+  <!-- The title of the web page, displayed in the browser tab -->
+  <title>Step Sequencer — Web Audio API</title>
+  <!-- Preconnects to Google Fonts to speed up font loading -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Imports the 'Inter' font family from Google Fonts (weights 400, 500, 600) -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Links to the external CSS stylesheet that contains all our dark-mode UI styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+  <!-- ── Top navigation bar: transport + global settings ── -->
+  <!-- The <nav> element represents a section with navigation or main control links -->
+  <nav class="nav" id="navBar">
+    <!-- Play/Stop toggle button for the sequencer -->
+    <button id="btnPlay">▶ Play</button>
+    
+    <!-- Wrapper label for the BPM (Beats Per Minute) input -->
+    <label class="nav-label">BPM
+      <!-- Number input to control tempo. Min 30, Max 300 beats per minute -->
+      <input id="inpBpm" type="number" value="120" min="30" max="300">
+    </label>
+    
+    <!-- Wrapper label for the sequence length (Steps) input -->
+    <label class="nav-label">Steps
+      <!-- Number input to change grid size dynamically (1 to 64 steps) -->
+      <input id="inpSteps" type="number" value="16" min="1" max="64">
+    </label>
+  </nav>
+
+  <!-- ── Main content: controls panel + canvases ── -->
+  <!-- <main> holds the primary content of the page layout (two-column grid in CSS) -->
+  <main class="main-layout">
+
+    <!-- Left column: track parameter sliders -->
+    <!-- <section> groups related content together. This one holds all the track parameters. -->
+    <section class="controls-panel" id="controlsPanel">
+      <!-- Heading showing which track is currently selected for editing -->
+      <h2>Track <span id="lblTrack">1</span> — Parameters</h2>
+
+      <!-- Group for the waveform volume sliders (Sine, Square, Saw, Triangle, Noise) -->
+      <div class="slider-group">
+        <h3>Waveform Volumes</h3>
+        <!-- Sine wave volume slider. min 0 (silence), max 1 (full volume), step 0.01 for smooth changes -->
+        <label>Sine <input id="slSine" type="range" min="0" max="1" step="0.01" value="0.5"> 
+          <!-- Span to show the exact numeric value of the slider -->
+          <span class="val-display" data-for="slSine">0.50</span>
+        </label>
+        
+        <!-- Square wave volume slider -->
+        <label>Square <input id="slSquare" type="range" min="0" max="1" step="0.01" value="0"> 
+          <span class="val-display" data-for="slSquare">0.00</span>
+        </label>
+        
+        <!-- Sawtooth wave volume slider -->
+        <label>Sawtooth <input id="slSaw" type="range" min="0" max="1" step="0.01" value="0"> 
+          <span class="val-display" data-for="slSaw">0.00</span>
+        </label>
+        
+        <!-- Triangle wave volume slider -->
+        <label>Triangle <input id="slTri" type="range" min="0" max="1" step="0.01" value="0"> 
+          <span class="val-display" data-for="slTri">0.00</span>
+        </label>
+        
+        <!-- White noise volume slider -->
+        <label>Noise <input id="slNoise" type="range" min="0" max="1" step="0.01" value="0"> 
+          <span class="val-display" data-for="slNoise">0.00</span>
+        </label>
+      </div>
+
+      <!-- Group for the phase shift controls (Delay offsets for each waveform) -->
+      <div class="slider-group">
+        <h3>Phase (degrees)</h3>
+        <!-- Sine wave phase shift from 0 to 360 degrees -->
+        <label>Sine φ <input id="slPhaseSine" type="range" min="0" max="360" step="1" value="0"> 
+          <span class="val-display" data-for="slPhaseSine">0°</span>
+        </label>
+        
+        <!-- Square wave phase shift -->
+        <label>Square φ <input id="slPhaseSquare" type="range" min="0" max="360" step="1" value="0"> 
+          <span class="val-display" data-for="slPhaseSquare">0°</span>
+        </label>
+        
+        <!-- Sawtooth wave phase shift -->
+        <label>Saw φ <input id="slPhaseSaw" type="range" min="0" max="360" step="1" value="0"> 
+          <span class="val-display" data-for="slPhaseSaw">0°</span>
+        </label>
+        
+        <!-- Triangle wave phase shift -->
+        <label>Triangle φ <input id="slPhaseTri" type="range" min="0" max="360" step="1" value="0"> 
+          <span class="val-display" data-for="slPhaseTri">0°</span>
+        </label>
+      </div>
+
+      <!-- Group for note duration (Decay) and Pitch (Frequency / Piano Note) -->
+      <div class="slider-group">
+        <h3>Envelope & Pitch</h3>
+        <!-- Decay time slider: controls how long the note fades out (0.05s to 2.0s) -->
+        <label>Decay <input id="slDecay" type="range" min="0.05" max="2" step="0.01" value="0.3"> 
+          <span class="val-display" data-for="slDecay">0.30</span>
+        </label>
+        
+        <!-- Pitch control container -->
+        <label>Frequency
+          <!-- Range slider for coarse frequency adjustments (20 Hz to 20 kHz) -->
+          <input id="slFreq" type="range" min="20" max="20000" step="1" value="220">
+          <!-- Number input for fine/exact frequency typing. Synced with the slider above. -->
+          <input id="inpHz" type="number" min="20" max="20000" step="1" value="220"> Hz
+        </label>
+        
+        <!-- Dropdown to select standard equal-temperament piano notes (A4, C3, etc.) -->
+        <label>Note
+          <!-- Empty by default, populated dynamically by JS on load -->
+          <select id="selNote"><option value="">—</option></select>
+        </label>
+      </div>
+
+      <!-- Group for advanced dynamic pitch controls -->
+      <div class="slider-group" id="grpAdvanced">
+        <h3>Per-Step & Glissando</h3>
+        <label class="toggle-label">
+          <input id="chkPerStep" type="checkbox"> Enable Per-Step Pitch
+        </label>
+        <label class="toggle-label">
+          <input id="chkGliss" type="checkbox"> Enable Glissando
+          <input id="inpGliss" type="number" value="10" min="-100" max="100" step="1" class="gliss-input" disabled> %
+        </label>
+      </div>
+
+      <!-- Button to instantly play the selected track's sound (useful for sound design without running the sequencer) -->
+      <button id="btnPreview">Preview [Space]</button>
+    </section>
+
+    <!-- Right column: canvases -->
+    <!-- Section containing the WebGL/Canvas visualizers -->
+    <section class="canvas-section" id="canvasSection">
+      
+      <!-- Card wrapper for the waveform shape visualizer -->
+      <div class="canvas-card">
+        <!-- Shows which track's wave shape is being drawn -->
+        <h3>Wave Shape — Track <span class="lbl-track-mirror">1</span></h3>
+        <!-- The <canvas> where JS draws the mixed wave outline. JS will set the width. -->
+        <canvas id="cvWave" height="90"></canvas>
+      </div>
+      
+      <!-- Card wrapper for the real-time FFT frequency spectrum analyser -->
+      <div class="canvas-card">
+        <!-- Checkbox to toggle between logarithmic and linear frequency mapping -->
+        <h3>Spectrometer <label class="log-toggle"><input id="chkLog" type="checkbox" checked> Log</label></h3>
+        <!-- The <canvas> where JS draws the spectrum bars. -->
+        <canvas id="cvSpec" height="130"></canvas>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- ── Step grid ── -->
+  <!-- The bottom section containing the sequencer's timeline / checkboxes -->
+  <section class="grid-section" id="gridSection">
+    <h2>Sequence Grid</h2>
+    <!-- The empty div where JS will inject the tracks and their checkboxes -->
+    <div id="grid"></div>
+    
+    <!-- Button to dynamically add more sequence tracks -->
+    <button id="btnAddTrack" type="button">＋ Add Track</button>
+  </section>
+
+  <!-- ── Three.js Audio-Reactive Visualizer ── -->
+  <!-- Container for the 3D visualizer, placed below the sequencer grid -->
+  <div id="visualizer-container" style="
+    width: 100%;
+    height: 420px;
+    margin: 0 auto;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    background: #000000;
+    position: relative;
+    overflow: hidden;
+  "></div>
+
+  <!-- Imports our main logic file at the end of the body, so it runs after all HTML elements exist in the DOM -->
+  <script src="sequencer.js"></script>
+
+  <!-- Three.js library (r160) loaded from CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+  <!-- Visualizer script — must load AFTER sequencer.js (needs ctx & analyser globals) -->
+  <script src="visualizer.js"></script>
+</body>
+
+</html>
