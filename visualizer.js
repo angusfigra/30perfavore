@@ -194,7 +194,8 @@
 
   const displayMaterial = new THREE.ShaderMaterial({
     uniforms: {
-      tTexture: { value: null }
+      tTexture: { value: null },
+      uAudioBands: { value: new THREE.Vector3(0, 0, 0) }
     },
     vertexShader: [
       'varying vec2 vUv;',
@@ -205,6 +206,7 @@
     ].join('\n'),
     fragmentShader: [
       'uniform sampler2D tTexture;',
+      'uniform vec3 uAudioBands;',
       'varying vec2 vUv;',
       '',
       'void main() {',
@@ -216,7 +218,14 @@
       '  // Cinematic vignette — darkens edges for depth',
       '  float vig = 1.0 - length((vUv - 0.5) * 1.4);',
       '  vig = smoothstep(0.0, 1.0, vig);',
+      '',
+      '  // Audio-reactive edge halo (Low=Red, Mid=Green, High=Blue)',
+      '  float edge = 1.0 - vig;',
+      '  vec3 haloColor = vec3(uAudioBands.x * 0.8, uAudioBands.y * 0.6, uAudioBands.z * 1.2);',
+      '  haloColor *= edge * 1.5;',
+      '',
       '  color *= mix(0.15, 1.0, vig);',
+      '  color += haloColor; // additive blend',
       '',
       '  gl_FragColor = vec4(color, 1.0);',
       '}'
@@ -233,6 +242,11 @@
 
   const rawFreqData  = new Uint8Array(analyser.frequencyBinCount);
   const smoothedData = new Float32Array(NUM_POINTS);
+  
+  // Sub-stepping data structures
+  const SUB_STEPS = 4;
+  const prevSmoothedData = new Float32Array(NUM_POINTS);
+  const stepSmoothedData = new Float32Array(NUM_POINTS);
 
   // Pre-computed log-scale bin map: visual point index → FFT bin.
   // Logarithmic distribution gives bass/kicks proportionally more visual
@@ -365,8 +379,8 @@
   scene.add(circPts.obj);
 
   // 2. Line — horizontal amplitude graph
-  const lineLine = createLineProj(NUM_POINTS);
-  const linePts  = createPointsProj(NUM_POINTS, 0.14);
+  const lineLine = createLineProj(NUM_POINTS + 1);
+  const linePts  = createPointsProj(NUM_POINTS + 1, 0.14);
   scene.add(lineLine.obj);
   scene.add(linePts.obj);
 
@@ -377,114 +391,151 @@
   scene.add(fishPts.obj);
 
   // 4. Curve Map — sine-wave baseline
-  const curvLine = createLineProj(NUM_POINTS);
-  const curvPts  = createPointsProj(NUM_POINTS, 0.14);
+  const curvLine = createLineProj(NUM_POINTS + 1);
+  const curvPts  = createPointsProj(NUM_POINTS + 1, 0.14);
   scene.add(curvLine.obj);
   scene.add(curvPts.obj);
 
-  // ─── Projection Update Functions ──────────────────────────────────────────
-  //
-  // Each function writes the CURRENT audio frame into the projection's
-  // vertex buffers. Vertex colors are multiplied by `intensity` so that
-  // zero amplitude = black = invisible on the black background.
-  // This is the "scrolling spectrum" injection point — only the fresh frame
-  // is drawn; the feedback loop handles all history/trails.
-
-  function updateCircle() {
-    const { pos, col } = circLine;
-    const pal    = palettes.circle;
-    const radius = BASE_SCALE * 0.45;
-
-    for (let i = 0; i <= NUM_POINTS; i++) {
-      const idx       = i % NUM_POINTS;
-      const angle     = (i / NUM_POINTS) * Math.PI * 2;
-      const intensity = smoothedData[idx];
-      const r         = radius + intensity * BASE_SCALE * 0.5;
-
-      pos[i * 3]     = Math.cos(angle) * r;
-      pos[i * 3 + 1] = Math.sin(angle) * r;
-      pos[i * 3 + 2] = 0;
-
-      // Intensity-gated color: silent bins produce black (invisible)
-      const c = lerpColor(pal.low, pal.high, intensity);
-      col[i * 3]     = c.r * intensity;
-      col[i * 3 + 1] = c.g * intensity;
-      col[i * 3 + 2] = c.b * intensity;
-    }
-    circLine.obj.geometry.attributes.position.needsUpdate = true;
-    circLine.obj.geometry.attributes.color.needsUpdate    = true;
-  }
-
-  function updateLine() {
-    const { pos, col } = lineLine;
-    const pal = palettes.line;
-    const w   = BASE_SCALE * 1.6;
-
-    for (let i = 0; i < NUM_POINTS; i++) {
-      const t         = i / (NUM_POINTS - 1);
-      const intensity = smoothedData[i];
-
-      pos[i * 3]     = (t - 0.5) * w;
-      pos[i * 3 + 1] = intensity * BASE_SCALE * 0.55;
-      pos[i * 3 + 2] = 0;
-
-      const c = lerpColor(pal.low, pal.high, intensity);
-      col[i * 3]     = c.r * intensity;
-      col[i * 3 + 1] = c.g * intensity;
-      col[i * 3 + 2] = c.b * intensity;
-    }
-    lineLine.obj.geometry.attributes.position.needsUpdate = true;
-    lineLine.obj.geometry.attributes.color.needsUpdate    = true;
-  }
-
-  function updateFishEye() {
-    const { pos, col } = fishLine;
-    const pal    = palettes.fishEye;
-    const radius = BASE_SCALE * 0.5;
-
-    for (let i = 0; i <= NUM_POINTS; i++) {
-      const idx       = i % NUM_POINTS;
-      const t         = i / NUM_POINTS;
-      const intensity = smoothedData[idx];
-
-      const angle      = (t - 0.5) * Math.PI * 2;
-      const bulge      = Math.sin(t * Math.PI);
+  // ─── Morphing & Projection State ──────────────────────────────────────────
+  
+  // Pure math functions for each shape, taking index, intensity, and returning position.
+  const shapeMath = {
+    circle: (i, intensity, outPos) => {
+      const angle = (i / NUM_POINTS) * Math.PI * 2;
+      const r = BASE_SCALE * 0.45 + intensity * BASE_SCALE * 0.5;
+      outPos.x = Math.cos(angle) * r;
+      outPos.y = Math.sin(angle) * r;
+      outPos.z = 0;
+    },
+    line: (i, intensity, outPos) => {
+      const t = i / NUM_POINTS;
+      const w = BASE_SCALE * 1.6;
+      outPos.x = (t - 0.5) * w;
+      outPos.y = intensity * BASE_SCALE * 0.55;
+      outPos.z = 0;
+    },
+    fishEye: (i, intensity, outPos) => {
+      const t = i / NUM_POINTS;
+      const angle = (t - 0.5) * Math.PI * 2;
+      const bulge = Math.sin(t * Math.PI);
+      const radius = BASE_SCALE * 0.5;
       const distortion = 1.0 + intensity * 1.6;
-
-      pos[i * 3]     = Math.sin(angle) * radius * distortion;
-      pos[i * 3 + 1] = bulge * radius * distortion * 0.8 + intensity * BASE_SCALE * 0.18;
-      pos[i * 3 + 2] = 0;
-
-      const c = lerpColor(pal.low, pal.high, intensity);
-      col[i * 3]     = c.r * intensity;
-      col[i * 3 + 1] = c.g * intensity;
-      col[i * 3 + 2] = c.b * intensity;
+      outPos.x = Math.sin(angle) * radius * distortion;
+      outPos.y = bulge * radius * distortion * 0.8 + intensity * BASE_SCALE * 0.18;
+      outPos.z = 0;
+    },
+    curveMap: (i, intensity, outPos) => {
+      const t = i / NUM_POINTS;
+      const w = BASE_SCALE * 1.4;
+      const sineBase = Math.sin(t * Math.PI * 4) * BASE_SCALE * 0.25;
+      outPos.x = (t - 0.5) * w;
+      outPos.y = sineBase + intensity * BASE_SCALE * 0.5;
+      outPos.z = 0;
     }
-    fishLine.obj.geometry.attributes.position.needsUpdate = true;
-    fishLine.obj.geometry.attributes.color.needsUpdate    = true;
+  };
+
+  const shapeNames = ['circle', 'line', 'fishEye', 'curveMap'];
+
+  // Base offset origins for each projection (the "home" position).
+  const DRIFT = {
+    circle:   { x: -1.3, y:  1.2 },
+    line:     { x:  1.0, y: -1.4 },
+    fishEye:  { x:  1.5, y:  1.0 },
+    curveMap: { x: -1.5, y: -1.5 }
+  };
+
+  const projections = [
+    { id: 'circle',   line: circLine, pts: circPts, pal: palettes.circle,   shape: 'circle',   targetShape: 'circle',   morphProgress: 0, cooldown: 0, rotVel:  0.005, targetRotVel:  0.005, rot: 0, posOffset: DRIFT.circle },
+    { id: 'line',     line: lineLine, pts: linePts, pal: palettes.line,     shape: 'line',     targetShape: 'line',     morphProgress: 0, cooldown: 0, rotVel: -0.003, targetRotVel: -0.003, rot: 0, posOffset: DRIFT.line },
+    { id: 'fishEye',  line: fishLine, pts: fishPts, pal: palettes.fishEye,  shape: 'fishEye',  targetShape: 'fishEye',  morphProgress: 0, cooldown: 0, rotVel:  0.007, targetRotVel:  0.007, rot: 0, posOffset: DRIFT.fishEye },
+    { id: 'curveMap', line: curvLine, pts: curvPts, pal: palettes.curveMap, shape: 'curveMap', targetShape: 'curveMap', morphProgress: 0, cooldown: 0, rotVel: -0.004, targetRotVel: -0.004, rot: 0, posOffset: DRIFT.curveMap }
+  ];
+
+  function easeInOutCubic(x) {
+    return x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
   }
 
-  function updateCurve() {
-    const { pos, col } = curvLine;
-    const pal = palettes.curveMap;
-    const w   = BASE_SCALE * 1.4;
+  // Temp vectors for interpolation
+  const posA = new THREE.Vector3();
+  const posB = new THREE.Vector3();
+  const tempHSL = {};
 
-    for (let i = 0; i < NUM_POINTS; i++) {
-      const t         = i / (NUM_POINTS - 1);
-      const intensity = smoothedData[i];
-      const sineBase  = Math.sin(t * Math.PI * 4) * BASE_SCALE * 0.25;
+  // Track the passage of time for random events
+  let lastMorphRollTime = 0;
+  let lastRotRollTime   = 0;
 
-      pos[i * 3]     = (t - 0.5) * w;
-      pos[i * 3 + 1] = sineBase + intensity * BASE_SCALE * 0.5;
-      pos[i * 3 + 2] = 0;
+  function updateProjections(currentData, intensityDivisor = 1) {
+    const now = performance.now();
+    const dt = 16.666; // Assume ~60fps for simple state timers
 
-      const c = lerpColor(pal.low, pal.high, intensity);
-      col[i * 3]     = c.r * intensity;
-      col[i * 3 + 1] = c.g * intensity;
-      col[i * 3 + 2] = c.b * intensity;
+    // ── 5s Morph Roll ──
+    if (now - lastMorphRollTime > 5000) {
+      lastMorphRollTime = now;
+      // Find eligible projections (not morphing, cooldown <= 0)
+      const eligible = projections.filter(p => p.shape === p.targetShape && p.cooldown <= 0);
+      if (eligible.length > 0) {
+        // 30% chance to morph
+        if (Math.random() < 0.3) {
+          const p = eligible[Math.floor(Math.random() * eligible.length)];
+          const newTarget = shapeNames[Math.floor(Math.random() * shapeNames.length)];
+          if (newTarget !== p.shape) {
+            p.targetShape = newTarget;
+            p.morphProgress = 0;
+          }
+        }
+      }
     }
-    curvLine.obj.geometry.attributes.position.needsUpdate = true;
-    curvLine.obj.geometry.attributes.color.needsUpdate    = true;
+
+    // ── Update and Render Each Projection ──
+    projections.forEach(p => {
+      // Manage Cooldowns & Morph Progress
+      if (p.cooldown > 0) p.cooldown -= dt;
+
+      let easedProgress = 0;
+      if (p.shape !== p.targetShape) {
+        // Morph over 25 seconds
+        p.morphProgress += dt / 25000;
+        if (p.morphProgress >= 1) {
+          p.shape = p.targetShape;
+          p.morphProgress = 0;
+          p.cooldown = 15000; // 15s cooldown
+        }
+        easedProgress = easeInOutCubic(Math.min(1, p.morphProgress));
+      }
+
+      // Fill buffers
+      for (let i = 0; i <= NUM_POINTS; i++) {
+        const idx = i % NUM_POINTS;
+        const intensity = currentData[idx];
+
+        // Position interpolation
+        shapeMath[p.shape](i, intensity, posA);
+        if (p.shape !== p.targetShape) {
+          shapeMath[p.targetShape](i, intensity, posB);
+          posA.lerp(posB, easedProgress);
+        }
+
+        p.line.pos[i * 3]     = posA.x;
+        p.line.pos[i * 3 + 1] = posA.y;
+        p.line.pos[i * 3 + 2] = posA.z;
+
+        // Color logic (with intensityDivisor for sub-stepping)
+        // Lerp between palette low/high
+        const c = lerpColor(p.pal.low, p.pal.high, intensity);
+        
+        // Chromatic inversion: shift hue per-vertex based on intensity
+        c.getHSL(tempHSL);
+        c.setHSL((tempHSL.h + 0.5 * intensity) % 1.0, tempHSL.s, tempHSL.l);
+
+        const scaledIntensity = intensity / intensityDivisor;
+        p.line.col[i * 3]     = c.r * scaledIntensity;
+        p.line.col[i * 3 + 1] = c.g * scaledIntensity;
+        p.line.col[i * 3 + 2] = c.b * scaledIntensity;
+      }
+
+      p.line.obj.geometry.attributes.position.needsUpdate = true;
+      p.line.obj.geometry.attributes.color.needsUpdate    = true;
+    });
   }
 
   // ─── Points Sync ──────────────────────────────────────────────────────────
@@ -501,51 +552,41 @@
   }
 
   // ─── Dynamic Drift & Rotation ─────────────────────────────────────────────
-  //
-  // Each projection continuously rotates and oscillates its position around
-  // its base offset. Because this movement feeds into the FBO feedback loop,
-  // the rotation creates spiraling trails and the drift creates flowing,
-  // organic interference patterns.
-
-  // Base offset origins for each projection (the "home" position).
-  const DRIFT = {
-    circle: { x: -1.3, y:  1.2 },
-    line:   { x:  1.0, y: -1.4 },
-    fish:   { x:  1.5, y:  1.0 },
-    curve:  { x: -1.5, y: -1.5 }
-  };
 
   function updateDrift() {
-    // performance.now() * 0.0001 → very slow time scale for organic motion
-    const t = performance.now() * 0.0001;
+    const now = performance.now();
+    const t = now * 0.0001; // extremely slow time for position organic drift
 
-    // ── Circle: continuous counter-clockwise rotation + gentle orbit ──
-    circLine.obj.rotation.z  = t * 0.5;
-    circLine.obj.position.x  = DRIFT.circle.x + Math.sin(t * 1.3) * 0.35;
-    circLine.obj.position.y  = DRIFT.circle.y + Math.cos(t * 0.9) * 0.25;
-    circPts.obj.rotation.z   = circLine.obj.rotation.z;
-    circPts.obj.position.copy(circLine.obj.position);
+    // ── 45s Rotation Target Roll ──
+    if (now - lastRotRollTime > 45000) {
+      lastRotRollTime = now;
+      projections.forEach(p => {
+        // Randomize target velocity (e.g. between -0.015 and 0.015)
+        p.targetRotVel = (Math.random() - 0.5) * 0.03;
+      });
+    }
 
-    // ── Line: gentle pendulum sway ──
-    lineLine.obj.rotation.z  = Math.sin(t * 0.7) * 0.15;
-    lineLine.obj.position.x  = DRIFT.line.x + Math.cos(t * 1.1) * 0.3;
-    lineLine.obj.position.y  = DRIFT.line.y + Math.sin(t * 0.8) * 0.2;
-    linePts.obj.rotation.z   = lineLine.obj.rotation.z;
-    linePts.obj.position.copy(lineLine.obj.position);
+    projections.forEach(p => {
+      // 1. Slow lerp velocity towards target velocity
+      p.rotVel += (p.targetRotVel - p.rotVel) * 0.005;
 
-    // ── Fish-Eye: opposite rotation + drifting figure-8 ──
-    fishLine.obj.rotation.z  = -t * 0.35;
-    fishLine.obj.position.x  = DRIFT.fish.x + Math.sin(t * 0.6) * 0.25;
-    fishLine.obj.position.y  = DRIFT.fish.y + Math.cos(t * 1.2) * 0.3;
-    fishPts.obj.rotation.z   = fishLine.obj.rotation.z;
-    fishPts.obj.position.copy(fishLine.obj.position);
+      // 2. Apply velocity to rotation
+      p.rot += p.rotVel;
+      
+      p.line.obj.rotation.z = p.rot;
+      p.pts.obj.rotation.z  = p.rot;
 
-    // ── Curve: slow wobble ──
-    curvLine.obj.rotation.z  = Math.cos(t * 0.5) * 0.18;
-    curvLine.obj.position.x  = DRIFT.curve.x + Math.cos(t * 0.7) * 0.2;
-    curvLine.obj.position.y  = DRIFT.curve.y + Math.sin(t * 1.0) * 0.35;
-    curvPts.obj.rotation.z   = curvLine.obj.rotation.z;
-    curvPts.obj.position.copy(curvLine.obj.position);
+      // 3. Positional Organic Drift (using simple math.sin/cos time offsets)
+      let dx = 0, dy = 0;
+      switch (p.id) {
+        case 'circle':   dx = Math.sin(t * 1.3) * 0.35; dy = Math.cos(t * 0.9) * 0.25; break;
+        case 'line':     dx = Math.cos(t * 1.1) * 0.3;  dy = Math.sin(t * 0.8) * 0.2;  break;
+        case 'fishEye':  dx = Math.sin(t * 0.6) * 0.25; dy = Math.cos(t * 1.2) * 0.3;  break;
+        case 'curveMap': dx = Math.cos(t * 0.7) * 0.2;  dy = Math.sin(t * 1.0) * 0.35; break;
+      }
+      p.line.obj.position.set(p.posOffset.x + dx, p.posOffset.y + dy, 0);
+      p.pts.obj.position.copy(p.line.obj.position);
+    });
   }
 
   // ─── Animation Loop ──────────────────────────────────────────────────────
@@ -553,32 +594,78 @@
   function animate() {
     requestAnimationFrame(animate);
 
+    // Save previous frame's data for sub-step interpolation
+    for (let i = 0; i < NUM_POINTS; i++) {
+      prevSmoothedData[i] = smoothedData[i];
+    }
+    projections.forEach(p => {
+      p.prevRot = p.rot;
+      if (!p.prevPos) p.prevPos = new THREE.Vector3();
+      p.prevPos.copy(p.line.obj.position);
+    });
+
     // ── Update audio data (log mapping + ADSR smoothing) ──
     updateAudioData();
 
-    // ── Update projection geometries with current audio frame ──
-    updateCircle();
-    updateLine();
-    updateFishEye();
-    updateCurve();
+    // ── Calculate Audio Bands for Edge Halo ──
+    let sumLow = 0, sumMid = 0, sumHigh = 0;
+    const third = Math.floor(NUM_POINTS / 3);
+    for (let i = 0; i < third; i++) sumLow += smoothedData[i];
+    for (let i = third; i < third * 2; i++) sumMid += smoothedData[i];
+    for (let i = third * 2; i < NUM_POINTS; i++) sumHigh += smoothedData[i];
+    displayMaterial.uniforms.uAudioBands.value.set(
+      sumLow / third,
+      sumMid / third,
+      sumHigh / (NUM_POINTS - third * 2)
+    );
 
-    // ── Sync points layers to their line counterparts ──
-    syncPts(circLine, circPts, NUM_POINTS + 1);
-    syncPts(lineLine, linePts, NUM_POINTS);
-    syncPts(fishLine, fishPts, NUM_POINTS + 1);
-    syncPts(curvLine, curvPts, NUM_POINTS);
-
-    // ── Apply organic drift & rotation ──
+    // ── Update drift targets for THIS frame ──
     updateDrift();
+    
+    // Store the drift targets so they aren't overwritten during sub-steps
+    projections.forEach(p => {
+      if (!p.targetPos) p.targetPos = new THREE.Vector3();
+      p.targetPos.copy(p.line.obj.position);
+    });
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  3-PASS RENDER PIPELINE
+    //  3-PASS RENDER PIPELINE (with SUB-STEPPING)
     // ═══════════════════════════════════════════════════════════════════════
 
-    // Pass 1: Render the 4 projections (current audio frame) → sceneRT
+    // Pass 1: Render the 4 projections → sceneRT (Multi-stepped for smooth trails)
     renderer.setRenderTarget(sceneRT);
     renderer.clear();
-    renderer.render(scene, camera);
+    renderer.autoClear = false;
+
+    for (let step = 1; step <= SUB_STEPS; step++) {
+      const t = step / SUB_STEPS;
+
+      // Lerp audio data
+      for (let i = 0; i < NUM_POINTS; i++) {
+        stepSmoothedData[i] = prevSmoothedData[i] + (smoothedData[i] - prevSmoothedData[i]) * t;
+      }
+
+      // Interpolate rotation and position for smooth in-between frames
+      projections.forEach(p => {
+        p.line.obj.rotation.z = p.prevRot + (p.rot - p.prevRot) * t;
+        p.pts.obj.rotation.z  = p.line.obj.rotation.z;
+
+        p.line.obj.position.lerpVectors(p.prevPos, p.targetPos, t);
+        p.pts.obj.position.copy(p.line.obj.position);
+      });
+
+      // Update geometry buffers with interpolated data
+      updateProjections(stepSmoothedData, SUB_STEPS);
+      
+      // Sync points
+      projections.forEach(p => syncPts(p.line, p.pts, NUM_POINTS + 1));
+
+      // Draw this sub-step
+      renderer.render(scene, camera);
+    }
+    
+    // Restore autoClear for future passes
+    renderer.autoClear = true;
 
     // Pass 2: Feedback shader blends (expanded prev trails + fresh scene)
     //         → writeFB, with decay and clamp ≤ 1.0
@@ -593,7 +680,7 @@
     readFB    = writeFB;
     writeFB   = tmp;
 
-    // Pass 3: Display shader (gamma + vignette) → screen
+    // Pass 3: Display shader (gamma + vignette + halo) → screen
     displayMaterial.uniforms.tTexture.value = readFB.texture;
     renderer.setRenderTarget(null);
     renderer.clear();
