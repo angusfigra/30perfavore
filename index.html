@@ -105,12 +105,24 @@
         </label>
       </div>
 
-      <!-- Group for note duration (Decay) and Pitch (Frequency / Piano Note) -->
+      <!-- Group for ADSR envelope and Pitch (Frequency / Piano Note) -->
       <div class="slider-group">
         <h3>Envelope & Pitch</h3>
-        <!-- Decay time slider: controls how long the note fades out (0.05s to 2.0s) -->
+        <!-- Attack time slider: ramp from silence to peak volume -->
+        <label>Attack <input id="slAttack" type="range" min="0.001" max="1" step="0.001" value="0.01"> 
+          <span class="val-display" data-for="slAttack">0.010</span>
+        </label>
+        <!-- Decay time slider: ramp from peak down to sustain level -->
         <label>Decay <input id="slDecay" type="range" min="0.05" max="2" step="0.01" value="0.3"> 
           <span class="val-display" data-for="slDecay">0.30</span>
+        </label>
+        <!-- Sustain level slider: fraction of peak volume held after decay -->
+        <label>Sustain <input id="slSustain" type="range" min="0" max="1" step="0.01" value="0.5"> 
+          <span class="val-display" data-for="slSustain">0.50</span>
+        </label>
+        <!-- Release time slider: fade from sustain to silence -->
+        <label>Release <input id="slRelease" type="range" min="0.01" max="2" step="0.01" value="0.3"> 
+          <span class="val-display" data-for="slRelease">0.30</span>
         </label>
         
         <!-- Pitch control container -->
@@ -134,9 +146,24 @@
         <label class="toggle-label">
           <input id="chkPerStep" type="checkbox"> Enable Per-Step Pitch
         </label>
+
+        <!-- Per-step pitch editor panel (shown when a step is Shift+Clicked) -->
+        <div id="perStepEditor" class="per-step-editor">
+          <span class="per-step-editor-label">Editing: <strong id="lblSelectedStep">—</strong></span>
+          <label>Hz <input id="inpStepHz" type="number" min="20" max="20000" step="1" value="220"></label>
+          <label>Note
+            <select id="selStepNote"><option value="">—</option></select>
+          </label>
+          <button id="btnResetSteps" type="button">Reset All Steps</button>
+        </div>
+
         <label class="toggle-label">
           <input id="chkGliss" type="checkbox"> Enable Glissando
-          <input id="inpGliss" type="number" value="10" min="-100" max="100" step="1" class="gliss-input" disabled> %
+          <input id="inpGliss" type="number" value="100" min="-2400" max="2400" step="1" class="gliss-input" disabled> cents
+          <select id="selGlissDir" class="gliss-dir" disabled>
+            <option value="up">Up</option>
+            <option value="down">Down</option>
+          </select>
         </label>
       </div>
 

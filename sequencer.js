@@ -75,7 +75,7 @@ let schedHandle = null;
 // ─── Track Parameters ───────────────────────────────────────────────────────
 
 // tParams is an array of objects, one per track. Each object stores the
-// current mix levels, phase offsets, decay time, frequency, track volume,
+// current mix levels, phase offsets, ADSR envelope, frequency, track volume,
 // and advanced pitch properties (per-step pitch, glissando).
 let tParams = Array.from({ length: numTracks }, (_, i) => ({
   sine:   0.5,   // volume of the sine waveform (0–1)
@@ -83,7 +83,11 @@ let tParams = Array.from({ length: numTracks }, (_, i) => ({
   saw:    0,     // volume of the sawtooth waveform (0–1)
   tri:    0,     // volume of the triangle waveform (0–1)
   noise:  0,     // volume of white noise (0–1)
-  decay:  0.3,   // decay time in seconds (controls note length)
+  // ADSR envelope parameters:
+  attack:  0.01,  // attack time in seconds (ramp from silence to peak)
+  decay:   0.3,   // decay time in seconds (ramp from peak to sustain level)
+  sustain: 0.5,   // sustain level as a fraction of peak volume (0–1)
+  release: 0.3,   // release time in seconds (fade from sustain to silence)
   freq:   TRACK_FREQ[i],  // fundamental base frequency in Hz
   vol:    1.0,   // overall track volume (0–1), controlled by the in-grid slider
   // Phase offsets in degrees (0–360) for each waveform type.
@@ -93,14 +97,20 @@ let tParams = Array.from({ length: numTracks }, (_, i) => ({
   phaseTri:    0,
   // Advanced Pitch controls:
   perStepPitch: false, // if true, reads from stepFreqs instead of base freq
-  glissando:    false, // if true, pitch slides to target during note
-  glissPercent: 10,    // percentage to slide (+10% or -20%, etc)
-  stepFreqs:    new Array(16).fill(TRACK_FREQ[i]) // individual Hz per step
+  glissando:    false, // if true, pitch bends during the release phase
+  glissCents:   100,   // pitch bend amount in cents (1200 cents = 1 octave)
+  glissDir:     'up',  // pitch bend direction: 'up' or 'down'
+  stepFreqs:    new Array(16).fill(TRACK_FREQ[i]), // individual Hz per step
+  stepEdited:   new Array(16).fill(false) // tracks which steps have been explicitly edited
 }));
 
 // tGrid stores the on/off pattern for each track. It is a 2D array:
 // tGrid[trackIndex][stepIndex] = true if that step is active (will trigger).
 let tGrid = Array.from({ length: numTracks }, () => []);
+
+// selectedStep tracks which step is currently selected for per-step pitch editing.
+// null when no step is selected; { track, step } when editing.
+let selectedStep = null;
 
 // ─── Grid: Build & Render ───────────────────────────────────────────────────
 
@@ -156,7 +166,10 @@ function addTrack() {
     saw:    0,
     tri:    0,
     noise:  0,
-    decay:  0.3,
+    attack:  0.01,
+    decay:   0.3,
+    sustain: 0.5,
+    release: 0.3,
     freq:   defaultFreq,
     vol:    1.0,
     phaseSine:   0,
@@ -165,8 +178,10 @@ function addTrack() {
     phaseTri:    0,
     perStepPitch: false,
     glissando:    false,
-    glissPercent: 10,
-    stepFreqs:    new Array(numSteps).fill(defaultFreq)
+    glissCents:   100,
+    glissDir:     'up',
+    stepFreqs:    new Array(numSteps).fill(defaultFreq),
+    stepEdited:   new Array(numSteps).fill(false)
   });
   
   // Create an empty grid row
@@ -193,13 +208,16 @@ function rebuildGrid() {
     return next;
   });
 
-  // Also resize the stepFreqs array for each track
+  // Also resize the stepFreqs and stepEdited arrays for each track
   tParams.forEach(p => {
     const nextFreqs = new Array(numSteps).fill(p.freq);
+    const nextEdited = new Array(numSteps).fill(false);
     for (let i = 0; i < Math.min(p.stepFreqs.length, numSteps); i++) {
       nextFreqs[i] = p.stepFreqs[i];
+      nextEdited[i] = p.stepEdited[i];
     }
     p.stepFreqs = nextFreqs;
+    p.stepEdited = nextEdited;
   });
 
   renderGrid();
@@ -281,63 +299,30 @@ function renderGrid() {
       cb.id = 'cb' + t + '_' + s;
       cb.checked = tGrid[t][s];
 
+      // If this is the currently selected step for per-step editing, highlight it
+      if (selectedStep && selectedStep.track === t && selectedStep.step === s) {
+        cb.classList.add('step-selected');
+      }
+
+      cb.addEventListener('click', e => {
+        // Shift+Click selects a step for per-step pitch editing (without toggling)
+        if (e.shiftKey && tParams[t].perStepPitch && tGrid[t][s]) {
+          e.preventDefault(); // Don't toggle the checkbox
+          selectStepForEditing(t, s);
+          return;
+        }
+      });
+
       cb.addEventListener('change', e => {
         tGrid[t][s] = e.target.checked;
-        // Re-render this row so the freq input appears/disappears if per-step pitch is on
-        renderGrid();
+        // If a step is unchecked and it was the selected step, deselect it
+        if (!e.target.checked && selectedStep &&
+            selectedStep.track === t && selectedStep.step === s) {
+          deselectStep();
+        }
       });
       
       cell.appendChild(cb);
-
-      // If Per-Step Pitch is enabled AND the step is active, show the tiny Hz input and Note dropdown
-      if (tParams[t].perStepPitch && cb.checked) {
-        // Dropdown for standard notes
-        const selNote = document.createElement('select');
-        selNote.className = 'step-note';
-        selNote.innerHTML = '<option value="">—</option>';
-        populateNoteDropdown(selNote);
-        
-        // Find matching option for the current step frequency
-        const currentFreq = Math.round(tParams[t].stepFreqs[s] * 100) / 100;
-        let matchedOption = false;
-        Array.from(selNote.options).forEach(opt => {
-          if (opt.value && Math.abs(parseFloat(opt.value) - currentFreq) < 0.1) {
-            selNote.value = opt.value;
-            matchedOption = true;
-          }
-        });
-        if (!matchedOption) selNote.value = '';
-
-        // Number input for exact Hz
-        const inpFreq = document.createElement('input');
-        inpFreq.type = 'number';
-        inpFreq.className = 'step-freq';
-        inpFreq.min = '20';
-        inpFreq.max = '20000';
-        inpFreq.value = Math.round(tParams[t].stepFreqs[s]);
-        
-        // Note selection handler
-        selNote.addEventListener('change', e => {
-          if (!e.target.value) return;
-          const val = parseFloat(e.target.value);
-          tParams[t].stepFreqs[s] = val;
-          inpFreq.value = Math.round(val);
-        });
-
-        // Frequency typing handler
-        inpFreq.addEventListener('change', e => {
-          let val = parseFloat(e.target.value);
-          if (isNaN(val) || val < 20) val = 20;
-          if (val > 20000) val = 20000;
-          tParams[t].stepFreqs[s] = val;
-          e.target.value = val;
-          selNote.value = ''; // clear standard note selection if they type manually
-        });
-
-        cell.appendChild(selNote);
-        cell.appendChild(inpFreq);
-      }
-
       row.appendChild(cell);
     }
 
@@ -360,7 +345,13 @@ function loadSliders() {
   document.getElementById('slSaw').value      = p.saw;
   document.getElementById('slTri').value      = p.tri;
   document.getElementById('slNoise').value    = p.noise;
+
+  // ADSR envelope sliders.
+  document.getElementById('slAttack').value   = p.attack;
   document.getElementById('slDecay').value    = p.decay;
+  document.getElementById('slSustain').value  = p.sustain;
+  document.getElementById('slRelease').value  = p.release;
+
   document.getElementById('slFreq').value     = p.freq;
   document.getElementById('inpHz').value      = p.freq;
 
@@ -370,11 +361,24 @@ function loadSliders() {
   document.getElementById('slPhaseSaw').value    = p.phaseSaw;
   document.getElementById('slPhaseTri').value    = p.phaseTri;
 
+  // Per-Step Pitch toggle.
+  document.getElementById('chkPerStep').checked = p.perStepPitch;
+
+  // Glissando controls.
+  document.getElementById('chkGliss').checked = p.glissando;
+  document.getElementById('inpGliss').value   = p.glissCents;
+  document.getElementById('inpGliss').disabled = !p.glissando;
+  document.getElementById('selGlissDir').value = p.glissDir;
+  document.getElementById('selGlissDir').disabled = !p.glissando;
+
   // Update the value display spans next to each slider.
   updateAllDisplays();
 
   // Try to match the frequency to a standard piano note.
   syncNoteSelector(p.freq);
+
+  // Deselect any per-step selection when switching tracks.
+  deselectStep();
 }
 
 /**
@@ -420,12 +424,22 @@ function saveSliders() {
   p.tri    = parseFloat(document.getElementById('slTri').value);
   p.noise  = parseFloat(document.getElementById('slNoise').value);
 
-  // ── Read envelope slider ──
-  p.decay = parseFloat(document.getElementById('slDecay').value);
+  // ── Read ADSR envelope sliders ──
+  p.attack  = parseFloat(document.getElementById('slAttack').value);
+  p.decay   = parseFloat(document.getElementById('slDecay').value);
+  p.sustain = parseFloat(document.getElementById('slSustain').value);
+  p.release = parseFloat(document.getElementById('slRelease').value);
 
   // ── Read frequency slider and sync the number input ──
-  p.freq = parseFloat(document.getElementById('slFreq').value);
+  const newFreq = parseFloat(document.getElementById('slFreq').value);
+  const freqChanged = (newFreq !== p.freq);
+  p.freq = newFreq;
   document.getElementById('inpHz').value = p.freq;
+
+  // If the base frequency changed, propagate to non-edited steps.
+  if (freqChanged) {
+    propagateBaseFreq(p);
+  }
 
   // ── Read phase sliders (degrees) ──
   p.phaseSine   = parseInt(document.getElementById('slPhaseSine').value, 10);
@@ -454,7 +468,10 @@ function updateAllDisplays() {
     slSaw:         p.saw.toFixed(2),
     slTri:         p.tri.toFixed(2),
     slNoise:       p.noise.toFixed(2),
+    slAttack:      p.attack.toFixed(3),
     slDecay:       p.decay.toFixed(2),
+    slSustain:     p.sustain.toFixed(2),
+    slRelease:     p.release.toFixed(2),
     slPhaseSine:   p.phaseSine + '°',
     slPhaseSquare: p.phaseSquare + '°',
     slPhaseSaw:    p.phaseSaw + '°',
@@ -472,8 +489,9 @@ function updateAllDisplays() {
 // ── Wire up all slider 'input' events to saveSliders() ──
 // Every time a user drags any of these sliders, we save the values.
 [
-  'slSine', 'slSquare', 'slSaw', 'slTri', 'slNoise', 'slDecay', 'slFreq',
-  'slPhaseSine', 'slPhaseSquare', 'slPhaseSaw', 'slPhaseTri'
+  'slSine', 'slSquare', 'slSaw', 'slTri', 'slNoise',
+  'slAttack', 'slDecay', 'slSustain', 'slRelease',
+  'slFreq', 'slPhaseSine', 'slPhaseSquare', 'slPhaseSaw', 'slPhaseTri'
 ].forEach(id => {
   const el = document.getElementById(id);
 
@@ -505,7 +523,11 @@ document.getElementById('inpHz').addEventListener('input', () => {
   document.getElementById('slFreq').value = v;
 
   // Store the frequency in the track parameters.
-  tParams[selTrack].freq = v;
+  const p = tParams[selTrack];
+  p.freq = v;
+
+  // Propagate to non-edited steps.
+  propagateBaseFreq(p);
 
   // Redraw the waveform canvas with the new frequency's phase-delay ratio.
   drawWave();
@@ -590,33 +612,56 @@ function triggerSound(t, time, step) {
     ? (p.stepFreqs[step] || p.freq) 
     : p.freq;
 
-  // Envelope timing constants.
-  const atk = 0.01;                  // attack time: 10 ms ramp from 0 to peak
-  const dec = p.decay;               // decay time: ramp from peak down to near-silence
-  const dur = atk + dec + 0.05;      // total note duration (with a 50 ms safety margin)
+  // ── ADSR Envelope Timing ──
+  const atk  = p.attack;              // attack time in seconds
+  const dec  = p.decay;               // decay time in seconds
+  const sus  = p.sustain;             // sustain level (fraction of peak, 0–1)
+  const rel  = p.release;             // release time in seconds
+  const gate = 0.075;                 // sustain hold ("gate") duration: 75 ms
+  const dur  = atk + dec + gate + rel + 0.05; // total note duration (with safety margin)
 
-  // ── Master Gain (volume envelope) ──
-  // This GainNode shapes the amplitude over time: silence → peak → decay.
-  // All oscillators and noise feed into this single node.
+  // Compute the sustain gain level. Use Math.max to keep above 0.001
+  // because exponentialRamp cannot target 0.
+  const sustainLevel = Math.max(p.vol * sus, 0.001);
+
+  // ── Master Gain (ADSR volume envelope) ──
+  // This GainNode shapes the amplitude over time through four phases:
+  //   1. Attack:  silence → peak volume
+  //   2. Decay:   peak volume → sustain level
+  //   3. Sustain: hold at sustain level for 'gate' duration
+  //   4. Release: sustain level → near-silence (0.001)
   const master = ctx.createGain();
 
-  // Start at zero volume (silence).
+  // Phase 1: Attack — start at silence, ramp to peak.
   master.gain.setValueAtTime(0, time);
-
-  // Ramp up to the track's overall volume over the attack time (10 ms).
-  // linearRampToValueAtTime schedules a straight-line ramp.
   master.gain.linearRampToValueAtTime(p.vol, time + atk);
 
-  // Decay from peak volume down to near-zero (0.001) using an exponential
-  // ramp, which sounds more natural than a linear decay.
-  // Note: exponentialRampToValueAtTime cannot ramp to exactly 0 — the target
-  // must be positive — so we use 0.001 (≈ −60 dB, effectively silence).
-  master.gain.exponentialRampToValueAtTime(0.001, time + atk + dec);
+  // Phase 2: Decay — ramp from peak down to the sustain level.
+  master.gain.linearRampToValueAtTime(sustainLevel, time + atk + dec);
+
+  // Phase 3: Sustain — hold the sustain level for the gate duration.
+  master.gain.setValueAtTime(sustainLevel, time + atk + dec + gate);
+
+  // Phase 4: Release — fade from sustain level to near-silence.
+  master.gain.exponentialRampToValueAtTime(0.001, time + atk + dec + gate + rel);
 
   // Route the master gain through the shared analyser node, which is already
   // connected to ctx.destination. This means every sound is both analysed
   // (for the spectrometer) and heard.
   master.connect(analyser);
+
+  // ── Glissando Target Frequency (cents-based, release-only) ──
+  // Pre-compute the target frequency for the pitch bend so we can apply it
+  // to all oscillators consistently.
+  let glissTargetFreq = baseFreq;
+  if (p.glissando) {
+    // Apply direction: 'down' negates the cents value.
+    const signedCents = p.glissDir === 'down' ? -Math.abs(p.glissCents) : Math.abs(p.glissCents);
+    // Cents formula: targetFreq = baseFreq * 2^(cents/1200)
+    glissTargetFreq = baseFreq * Math.pow(2, signedCents / 1200);
+    // Ensure the target is at least 1 Hz (linearRamp can handle any positive value).
+    glissTargetFreq = Math.max(glissTargetFreq, 1);
+  }
 
   // ── Oscillator Waveforms ──
   // We iterate over the four standard oscillator types. For each one that has
@@ -639,16 +684,15 @@ function triggerSound(t, time, step) {
     const osc = ctx.createOscillator();
     osc.type = type;                 // set the waveform shape
     
-    // Set initial frequency
+    // Set initial frequency — stays steady through Attack, Decay, and Sustain.
     osc.frequency.setValueAtTime(baseFreq, time);
     
-    // ── Glissando (Pitch Slide) ──
+    // ── Glissando (Pitch Bend during Release only) ──
     if (p.glissando) {
-      // Calculate target frequency based on the percentage (e.g. +10% -> 1.1)
-      const targetFreq = baseFreq * (1 + (p.glissPercent / 100));
-      // Ramp exponentially to the target frequency over the note's duration.
-      // Math.max is used because exponentialRamp cannot ramp to 0 or negative values.
-      osc.frequency.exponentialRampToValueAtTime(Math.max(targetFreq, 1), time + atk + dec);
+      // Hold the base frequency steady through the end of the sustain gate.
+      osc.frequency.setValueAtTime(baseFreq, time + atk + dec + gate);
+      // Bend to the target frequency linearly over the release duration.
+      osc.frequency.linearRampToValueAtTime(glissTargetFreq, time + atk + dec + gate + rel);
     }
 
     // ── Phase Shift via DelayNode ──
@@ -1204,9 +1248,14 @@ function populateNoteDropdown(sel) {
     if (!sel.value) return;
 
     const f = parseFloat(sel.value);
-    tParams[selTrack].freq = f;
+    const p = tParams[selTrack];
+    p.freq = f;
     document.getElementById('slFreq').value = f;
     document.getElementById('inpHz').value = Math.round(f * 100) / 100;
+
+    // Propagate to non-edited steps.
+    propagateBaseFreq(p);
+
     drawWave();
   });
 })();
@@ -1223,6 +1272,151 @@ document.getElementById('slFreq').addEventListener('input', resetNoteSelector);
 
 // ── Add Track button ──
 document.getElementById('btnAddTrack').addEventListener('click', addTrack);
+
+// ─── Per-Step Pitch Helpers ─────────────────────────────────────────────────
+
+/**
+ * propagateBaseFreq(p) updates all non-explicitly-edited steps to match
+ * the track's current base frequency. Steps that the user has manually
+ * edited via the per-step editor are left untouched.
+ */
+function propagateBaseFreq(p) {
+  for (let i = 0; i < p.stepFreqs.length; i++) {
+    if (!p.stepEdited[i]) {
+      p.stepFreqs[i] = p.freq;
+    }
+  }
+}
+
+/**
+ * selectStepForEditing(t, s) sets the given step as the active target for
+ * the per-step pitch editor panel. Updates the UI highlight and populates
+ * the editor inputs with the step's current frequency.
+ */
+function selectStepForEditing(t, s) {
+  // Remove previous selection highlight.
+  document.querySelectorAll('.step-selected').forEach(el => el.classList.remove('step-selected'));
+
+  // Set the new selection.
+  selectedStep = { track: t, step: s };
+
+  // Highlight the selected checkbox.
+  const cb = document.getElementById('cb' + t + '_' + s);
+  if (cb) cb.classList.add('step-selected');
+
+  // Show and populate the editor panel.
+  const editor = document.getElementById('perStepEditor');
+  editor.classList.add('active');
+
+  document.getElementById('lblSelectedStep').textContent =
+    'T' + (t + 1) + ' · Step ' + (s + 1);
+
+  const currentFreq = tParams[t].stepFreqs[s];
+  document.getElementById('inpStepHz').value = Math.round(currentFreq);
+
+  // Sync the note dropdown to the current step frequency.
+  const selNote = document.getElementById('selStepNote');
+  syncDropdownToFreq(selNote, currentFreq);
+}
+
+/**
+ * deselectStep() clears the per-step selection and hides the editor panel.
+ */
+function deselectStep() {
+  selectedStep = null;
+  document.querySelectorAll('.step-selected').forEach(el => el.classList.remove('step-selected'));
+  document.getElementById('perStepEditor').classList.remove('active');
+}
+
+/**
+ * syncDropdownToFreq(sel, freq) finds the closest matching note in the
+ * dropdown and selects it if within 0.5 Hz.
+ */
+function syncDropdownToFreq(sel, freq) {
+  let bestOpt = '';
+  let bestDiff = Infinity;
+  for (const opt of sel.options) {
+    if (!opt.value) continue;
+    const diff = Math.abs(parseFloat(opt.value) - freq);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestOpt = opt.value;
+    }
+  }
+  sel.value = bestDiff < 0.5 ? bestOpt : '';
+}
+
+// ── Per-Step Editor: populate the step note dropdown ──
+populateNoteDropdown(document.getElementById('selStepNote'));
+
+// ── Per-Step Editor: Hz input handler ──
+document.getElementById('inpStepHz').addEventListener('change', e => {
+  if (!selectedStep) return;
+  let val = parseFloat(e.target.value);
+  if (isNaN(val) || val < 20) val = 20;
+  if (val > 20000) val = 20000;
+  e.target.value = val;
+
+  const { track, step } = selectedStep;
+  tParams[track].stepFreqs[step] = val;
+  tParams[track].stepEdited[step] = true;
+
+  // Clear the note dropdown since the user typed a custom value.
+  document.getElementById('selStepNote').value = '';
+});
+
+// ── Per-Step Editor: Note dropdown handler ──
+document.getElementById('selStepNote').addEventListener('change', e => {
+  if (!selectedStep || !e.target.value) return;
+  const val = parseFloat(e.target.value);
+
+  const { track, step } = selectedStep;
+  tParams[track].stepFreqs[step] = val;
+  tParams[track].stepEdited[step] = true;
+
+  document.getElementById('inpStepHz').value = Math.round(val);
+});
+
+// ── Per-Step Editor: Reset All Steps button ──
+document.getElementById('btnResetSteps').addEventListener('click', () => {
+  const p = tParams[selTrack];
+  for (let i = 0; i < p.stepFreqs.length; i++) {
+    p.stepFreqs[i] = p.freq;
+    p.stepEdited[i] = false;
+  }
+  deselectStep();
+});
+
+// ── Per-Step Pitch toggle ──
+document.getElementById('chkPerStep').addEventListener('change', e => {
+  tParams[selTrack].perStepPitch = e.target.checked;
+  if (!e.target.checked) {
+    deselectStep();
+  }
+});
+
+// ─── Glissando Controls ─────────────────────────────────────────────────────
+
+// ── Glissando toggle checkbox ──
+document.getElementById('chkGliss').addEventListener('change', e => {
+  tParams[selTrack].glissando = e.target.checked;
+  document.getElementById('inpGliss').disabled = !e.target.checked;
+  document.getElementById('selGlissDir').disabled = !e.target.checked;
+});
+
+// ── Glissando cents input ──
+document.getElementById('inpGliss').addEventListener('change', e => {
+  let val = parseInt(e.target.value, 10);
+  if (isNaN(val)) val = 0;
+  val = Math.max(-2400, Math.min(2400, val));
+  e.target.value = val;
+  tParams[selTrack].glissCents = val;
+});
+
+// ── Glissando direction dropdown ──
+document.getElementById('selGlissDir').addEventListener('change', e => {
+  tParams[selTrack].glissDir = e.target.value;
+});
 
 // ─── Initialisation ─────────────────────────────────────────────────────────
 

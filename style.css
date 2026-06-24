@@ -383,6 +383,87 @@ input[type="range"]::-moz-range-thumb {
   cursor: not-allowed;         /* Show "not allowed" cursor */
 }
 
+/* ─── Glissando direction dropdown ───────────────────────────── */
+.gliss-dir {
+  width: 55px !important;
+  padding: 2px 4px !important;
+  font-size: 0.78rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+.gliss-dir:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ─── Per-Step Pitch Editor Panel ────────────────────────────── */
+/* Compact inline panel shown when a step is Shift+Clicked */
+.per-step-editor {
+  display: none;               /* Hidden by default, shown via JS */
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 8px 0;
+  padding: 10px 12px;
+  background: rgba(15, 52, 96, 0.5);
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+}
+
+/* When visible (JS adds .active class) */
+.per-step-editor.active {
+  display: flex;
+}
+
+.per-step-editor label {
+  font-size: 0.8rem;
+  gap: 6px;
+}
+
+.per-step-editor-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.per-step-editor-label strong {
+  color: var(--accent);
+}
+
+/* Compact inputs inside the editor */
+.per-step-editor input[type="number"] {
+  width: 70px;
+}
+
+.per-step-editor select {
+  width: auto;
+  min-width: 60px;
+}
+
+/* Reset button inside the per-step editor */
+#btnResetSteps {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+#btnResetSteps:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  background: rgba(233, 168, 76, 0.08);
+}
+
+/* ─── Selected Step Highlight ────────────────────────────────── */
+/* Applied to a checkbox when it's selected for per-step editing */
+.grid-row input[type="checkbox"].step-selected {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 8px rgba(100, 200, 255, 0.5);
+  outline: 2px solid #64c8ff;
+  outline-offset: 1px;
+}
+
 /* ─── Step cell wrapper ──────────────────────────────────────── */
 /* Wraps each step's checkbox + optional per-step frequency input */
 .step-cell {
